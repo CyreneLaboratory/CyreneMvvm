@@ -92,12 +92,32 @@ public class ObservableGenerator : ISourceGenerator
         return sb.ToString();
     }
 
+    private string GenerateAttributes(IPropertySymbol propSymbol)
+    {
+        if (!GeneratorHelper.HasObservableColumnAttr(propSymbol)) return "";
+
+        var typeSymbol = propSymbol.Type;
+        if (GeneratorHelper.IsPrimary(typeSymbol)) return "";
+
+        var sb = new StringBuilder();
+
+        sb.Append("    [global::SqlSugar.SugarColumn(ColumnDataType = \"TEXT\"");
+        if (typeSymbol.SpecialType != SpecialType.System_String) sb.Append(", IsJson = true");
+        if (typeSymbol.NullableAnnotation == NullableAnnotation.Annotated ||
+            (typeSymbol is INamedTypeSymbol n && n.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T))
+            sb.Append(", IsNullable = true");
+        sb.Append(")]");
+
+        return sb.ToString();
+    }
+
     private string GenerateProperty(IPropertySymbol propSymbol)
     {
         var propType = propSymbol.Type.ToDisplayString();
 
         var sb = new StringBuilder();
 
+        sb.AppendLine(GenerateAttributes(propSymbol));
         sb.AppendLine($"    public partial {propType} {propSymbol.Name}");
         sb.AppendLine("    {");
         sb.AppendLine("        get;");
@@ -122,6 +142,7 @@ public class ObservableGenerator : ISourceGenerator
 
         var sb = new StringBuilder();
 
+        sb.AppendLine(GenerateAttributes(propSymbol));
         sb.AppendLine($"    public partial {propType} {propName}");
         sb.AppendLine("    {");
         sb.AppendLine("        get");
