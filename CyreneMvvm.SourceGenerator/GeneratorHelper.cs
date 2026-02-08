@@ -8,9 +8,9 @@ namespace CyreneMvvm.SourceGenerator;
 public static class GeneratorHelper
 {
     public const string INotifyCallback = "CyreneMvvm.Model.INotifyCallback";
-    public const string ObservableObject = "CyreneMvvm.Model.ObservableObject";
-    public const string ObservableList = "CyreneMvvm.Model.ObservableList";
-    public const string ObservableDictionary = "CyreneMvvm.Model.ObservableDictionary";
+    public const string ObObject = "CyreneMvvm.Model.ObObject";
+    public const string ObList = "CyreneMvvm.Model.ObList";
+    public const string ObDictionary = "CyreneMvvm.Model.ObDictionary";
     public const string ObProp = "CyreneMvvm.Attributes.ObPropAttribute";
     public const string ObColumn = "CyreneMvvm.Attributes.ObColumnAttribute";
 
@@ -33,12 +33,12 @@ public static class GeneratorHelper
         };
     }
 
-    public static bool IsObservableObject(INamedTypeSymbol classSymbol)
+    public static bool IsObObject(INamedTypeSymbol classSymbol)
     {
         var baseType = classSymbol.BaseType;
         while (baseType != null)
         {
-            if (baseType.ToDisplayString().Contains(ObservableObject)) return true;
+            if (baseType.ToDisplayString().Contains(ObObject)) return true;
             baseType = baseType.BaseType;
         }
         return false;
@@ -49,16 +49,16 @@ public static class GeneratorHelper
         return prop.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword));
     }
 
-    public static bool IsObservableCollection(PropertyDeclarationSyntax prop, SemanticModel model)
+    public static bool IsObCollection(PropertyDeclarationSyntax prop, SemanticModel model)
     {
         var propertySymbol = model.GetDeclaredSymbol(prop);
         if (propertySymbol == null) return false;
 
         var typeString = propertySymbol.Type.ToDisplayString();
-        return typeString.Contains(ObservableList) || typeString.Contains(ObservableDictionary);
+        return typeString.Contains(ObList) || typeString.Contains(ObDictionary);
     }
 
-    public static bool HasObservablePropAttr(PropertyDeclarationSyntax prop, SemanticModel model)
+    public static bool HasObPropAttr(PropertyDeclarationSyntax prop, SemanticModel model)
     {
         foreach (var attributeList in prop.AttributeLists)
             foreach (var attribute in attributeList.Attributes)
@@ -69,7 +69,7 @@ public static class GeneratorHelper
         return false;
     }
 
-    public static bool HasObservableColumnAttr(PropertyDeclarationSyntax prop, SemanticModel model)
+    public static bool HasObColumnAttr(PropertyDeclarationSyntax prop, SemanticModel model)
     {
         foreach (var attributeList in prop.AttributeLists)
             foreach (var attribute in attributeList.Attributes)
@@ -80,7 +80,7 @@ public static class GeneratorHelper
         return false;
     }
 
-    public static bool HasObservableColumnAttr(IPropertySymbol propSymbol)
+    public static bool HasObColumnAttr(IPropertySymbol propSymbol)
     {
         foreach (var attribute in propSymbol.GetAttributes())
             if (attribute.AttributeClass?.ToDisplayString().Contains(ObColumn) == true)
@@ -90,12 +90,12 @@ public static class GeneratorHelper
 
     public static bool ShouldGenProp(PropertyDeclarationSyntax prop, SemanticModel model)
     {
-        return IsPartialProperty(prop) && !IsObservableCollection(prop, model) &&
-            (HasObservablePropAttr(prop, model) || HasObservableColumnAttr(prop, model));
+        return IsPartialProperty(prop) && !IsObCollection(prop, model) &&
+            (HasObPropAttr(prop, model) || HasObColumnAttr(prop, model));
     }
 
     public static bool ShouldGenCollection(PropertyDeclarationSyntax prop, SemanticModel model)
     {
-        return IsPartialProperty(prop) && IsObservableCollection(prop, model);
+        return IsPartialProperty(prop) && IsObCollection(prop, model);
     }
 }
