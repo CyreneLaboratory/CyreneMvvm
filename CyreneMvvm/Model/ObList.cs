@@ -18,6 +18,15 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
         Internal = [];
     }
 
+#pragma warning disable IDE0028
+
+    public ObList(int capacity)
+    {
+        Internal = new(capacity);
+    }
+
+#pragma warning restore IDE0028
+
     public ObList(IEnumerable<T> collection)
     {
         Internal = [.. collection];
@@ -39,6 +48,11 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     public int Count => Internal.Count;
     public bool IsReadOnly => false;
+    public int Capacity
+    {
+        get => Internal.Capacity;
+        set => Internal.Capacity = value;
+    }
 
     public void Add(T item)
     {
@@ -54,6 +68,14 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
+    public System.Collections.ObjectModel.ReadOnlyCollection<T> AsReadOnly() => Internal.AsReadOnly();
+
+    public int BinarySearch(int index, int count, T item, IComparer<T>? comparer) => Internal.BinarySearch(index, count, item, comparer);
+
+    public int BinarySearch(T item) => Internal.BinarySearch(item);
+
+    public int BinarySearch(T item, IComparer<T>? comparer) => Internal.BinarySearch(item, comparer);
+
     public void Clear()
     {
         foreach (var item in Internal) UnregisterValue(item);
@@ -61,30 +83,51 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
-    public bool Contains(T item)
-    {
-        return Internal.Contains(item);
-    }
+    public bool Contains(T item) => Internal.Contains(item);
 
-    public void CopyTo(T[] array, int arrayIndex)
-    {
-        Internal.CopyTo(array, arrayIndex);
-    }
+    public List<TOutput> ConvertAll<TOutput>(Converter<T, TOutput> converter) => Internal.ConvertAll(converter);
 
-    public IEnumerator<T> GetEnumerator()
-    {
-        return Internal.GetEnumerator();
-    }
+    public void CopyTo(T[] array, int arrayIndex) => Internal.CopyTo(array, arrayIndex);
 
-    IEnumerator IEnumerable.GetEnumerator()
-    {
-        return GetEnumerator();
-    }
+    public void CopyTo(T[] array) => Internal.CopyTo(array);
 
-    public int IndexOf(T item)
-    {
-        return Internal.IndexOf(item);
-    }
+    public void CopyTo(int index, T[] array, int arrayIndex, int count) => Internal.CopyTo(index, array, arrayIndex, count);
+
+    public int EnsureCapacity(int capacity) => Internal.EnsureCapacity(capacity);
+
+    public bool Exists(Predicate<T> match) => Internal.Exists(match);
+
+    public T? Find(Predicate<T> match) => Internal.Find(match);
+
+    public List<T> FindAll(Predicate<T> match) => Internal.FindAll(match);
+
+    public int FindIndex(int startIndex, int count, Predicate<T> match) => Internal.FindIndex(startIndex, count, match);
+
+    public int FindIndex(int startIndex, Predicate<T> match) => Internal.FindIndex(startIndex, match);
+
+    public int FindIndex(Predicate<T> match) => Internal.FindIndex(match);
+
+    public T? FindLast(Predicate<T> match) => Internal.FindLast(match);
+
+    public int FindLastIndex(int startIndex, int count, Predicate<T> match) => Internal.FindLastIndex(startIndex, count, match);
+
+    public int FindLastIndex(int startIndex, Predicate<T> match) => Internal.FindLastIndex(startIndex, match);
+
+    public int FindLastIndex(Predicate<T> match) => Internal.FindLastIndex(match);
+
+    public void ForEach(Action<T> action) => Internal.ForEach(action);
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    public IEnumerator<T> GetEnumerator() => Internal.GetEnumerator();
+
+    public List<T> GetRange(int index, int count) => Internal.GetRange(index, count);
+
+    public int IndexOf(T item, int index, int count) => Internal.IndexOf(item, index, count);
+
+    public int IndexOf(T item, int index) => Internal.IndexOf(item, index);
+
+    public int IndexOf(T item) => Internal.IndexOf(item);
 
     public void Insert(int index, T item)
     {
@@ -92,6 +135,19 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
         RegisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, index));
     }
+
+    public void InsertRange(int index, IEnumerable<T> collection)
+    {
+        Internal.InsertRange(index, collection);
+        foreach (var item in collection) RegisterValue(item);
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+    public int LastIndexOf(T item) => Internal.LastIndexOf(item);
+
+    public int LastIndexOf(T item, int index) => Internal.LastIndexOf(item, index);
+
+    public int LastIndexOf(T item, int index, int count) => Internal.LastIndexOf(item, index, count);
 
     public bool Remove(T item)
     {
@@ -103,14 +159,6 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
         }
         return removed;
-    }
-
-    public void RemoveAt(int index)
-    {
-        var item = Internal[index];
-        Internal.RemoveAt(index);
-        if (!Internal.Contains(item)) UnregisterValue(item);
-        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
     }
 
     public int RemoveAll(Predicate<T> match)
@@ -125,6 +173,67 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
         }
         return removed;
     }
+
+    public void RemoveAt(int index)
+    {
+        var item = Internal[index];
+        Internal.RemoveAt(index);
+        if (!Internal.Contains(item)) UnregisterValue(item);
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
+    }
+
+    public void RemoveRange(int index, int count)
+    {
+        var toRemove = Internal.GetRange(index, count);
+        Internal.RemoveRange(index, count);
+        foreach (var item in toRemove)
+            if (!Internal.Contains(item)) UnregisterValue(item);
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+    public void Reverse(int index, int count)
+    {
+        Internal.Reverse(index, count);
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+    public void Reverse()
+    {
+        Internal.Reverse();
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+    public List<T> Slice(int start, int length) => Internal.GetRange(start, length);
+
+    public void Sort(IComparer<T>? comparer)
+    {
+        Internal.Sort(comparer);
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+    public void Sort(Comparison<T> comparison)
+    {
+        Internal.Sort(comparison);
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+    public void Sort(int index, int count, IComparer<T>? comparer)
+    {
+        Internal.Sort(index, count, comparer);
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+    public void Sort()
+    {
+        Internal.Sort();
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+    public T[] ToArray() => [.. Internal];
+
+    public void TrimExcess() => Internal.TrimExcess();
+
+    public bool TrueForAll(Predicate<T> match) => Internal.TrueForAll(match);
 
     #endregion
 
