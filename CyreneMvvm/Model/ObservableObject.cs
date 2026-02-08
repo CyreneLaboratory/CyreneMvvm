@@ -1,12 +1,20 @@
+using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.CompilerServices;
 
 namespace CyreneMvvm.Model;
 
-public abstract class ObservableObject : INotifyPropertyChanged
+public abstract class ObservableObject : INotifyPropertyChanged, INotifyCallback
 {
+    private readonly Dictionary<object, Action> ParentObservers = [];
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    protected virtual void OnParentChanged()
+    {
+        foreach (var callback in ParentObservers.Values.ToArray()) callback();
+    }
 
     protected virtual void OnPropertyChanged([CallerMemberName] string? propName = null)
     {
@@ -16,13 +24,16 @@ public abstract class ObservableObject : INotifyPropertyChanged
     protected virtual void OnPropertyChanged(PropertyChangedEventArgs e)
     {
         PropertyChanged?.Invoke(this, e);
+        OnParentChanged();
     }
 
-    protected bool SetProperty<T>(ref T field, T newValue, [CallerMemberName] string? propName = null)
+    public void RegisterParent(object owner, Action callback)
     {
-        if (EqualityComparer<T>.Default.Equals(field, newValue)) return false;
-        field = newValue;
-        OnPropertyChanged(propName);
-        return true;
+        ParentObservers[owner] = callback;
+    }
+
+    public void UnregisterParent(object owner)
+    {
+        ParentObservers.Remove(owner);
     }
 }

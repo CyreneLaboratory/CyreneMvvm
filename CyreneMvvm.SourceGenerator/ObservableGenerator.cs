@@ -113,19 +113,33 @@ public class ObservableGenerator : ISourceGenerator
 
     private string GenerateProperty(IPropertySymbol propSymbol)
     {
+        var propName = propSymbol.Name;
         var propType = propSymbol.Type.ToDisplayString();
+        var isRef = propSymbol.Type.IsReferenceType && propSymbol.Type.SpecialType != SpecialType.System_String;
 
         var sb = new StringBuilder();
 
-        sb.AppendLine(GenerateAttributes(propSymbol));
-        sb.AppendLine($"    public partial {propType} {propSymbol.Name}");
+        sb.AppendLine($"    private void _On{propName}Changed()");
         sb.AppendLine("    {");
-        sb.AppendLine("        get;");
+        sb.AppendLine($"        OnPropertyChanged(nameof({propName}));");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        sb.AppendLine(GenerateAttributes(propSymbol));
+        sb.AppendLine($"    public partial {propType} {propName}");
+        sb.AppendLine("    {");
+        sb.AppendLine("        get");
+        sb.AppendLine("        {");
+        if (isRef) sb.AppendLine($"            if (field is global::{GeneratorHelper.INotifyCallback} r) r.RegisterParent(this, _On{propName}Changed);");
+        sb.AppendLine("            return field;");
+        sb.AppendLine("        }");
         sb.AppendLine("        set");
         sb.AppendLine("        {");
         sb.AppendLine($"            if (!global::System.Collections.Generic.EqualityComparer<{propType}>.Default.Equals(field, value))");
         sb.AppendLine("            {");
+        if (isRef) sb.AppendLine($"                if (field is global::{GeneratorHelper.INotifyCallback} u) u.UnregisterParent(this);");
         sb.AppendLine("                field = value;");
+        if (isRef) sb.AppendLine($"                if (field is global::{GeneratorHelper.INotifyCallback} r) r.RegisterParent(this, _On{propName}Changed);");
         sb.AppendLine("                OnPropertyChanged();");
         sb.AppendLine("            }");
         sb.AppendLine("        }");
@@ -142,20 +156,27 @@ public class ObservableGenerator : ISourceGenerator
 
         var sb = new StringBuilder();
 
+        sb.AppendLine($"    private void _On{propName}Changed()");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        OnPropertyChanged(nameof({propName}));");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
         sb.AppendLine(GenerateAttributes(propSymbol));
         sb.AppendLine($"    public partial {propType} {propName}");
         sb.AppendLine("    {");
         sb.AppendLine("        get");
         sb.AppendLine("        {");
-        sb.AppendLine($"            {(nullable ? "if (field != null) " : "")}field.RegisterParentProp(OnPropertyChanged, nameof({propName}));");
+        sb.AppendLine($"            {(nullable ? "if (field != null) " : "")}field.RegisterParent(this, _On{propName}Changed);");
         sb.AppendLine("            return field;");
         sb.AppendLine("        }");
         sb.AppendLine("        set");
         sb.AppendLine("        {");
         sb.AppendLine($"            if (!global::System.Collections.Generic.EqualityComparer<{propType}>.Default.Equals(field, value))");
         sb.AppendLine("            {");
-        sb.AppendLine("                if (field != null) field.UnregisterParentProp();");
+        sb.AppendLine("                if (field != null) field.UnregisterParent(this);");
         sb.AppendLine("                field = value;");
+        sb.AppendLine($"                {(nullable ? "if (field != null) " : "")}field.RegisterParent(this, _On{propName}Changed);");
         sb.AppendLine("                OnPropertyChanged();");
         sb.AppendLine("            }");
         sb.AppendLine("        }");

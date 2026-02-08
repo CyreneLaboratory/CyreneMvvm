@@ -7,6 +7,7 @@ namespace CyreneMvvm.SourceGenerator;
 
 public static class GeneratorHelper
 {
+    public const string INotifyCallback = "CyreneMvvm.Model.INotifyCallback";
     public const string ObservableObject = "CyreneMvvm.Model.ObservableObject";
     public const string ObservableList = "CyreneMvvm.Model.ObservableList";
     public const string ObservableDictionary = "CyreneMvvm.Model.ObservableDictionary";
