@@ -36,7 +36,7 @@ public class ObservableGenerator : ISourceGenerator
         {
             var model = context.Compilation.GetSemanticModel(candidateClass.SyntaxTree);
             var classSymbol = model.GetDeclaredSymbol(candidateClass);
-            if (classSymbol == null || !GeneratorHelper.IsObservableObject(classSymbol)) continue;
+            if (classSymbol == null || !GeneratorHelper.IsObObject(classSymbol)) continue;
 
             var source = Generate(classSymbol, candidateClass, model);
             if (string.IsNullOrEmpty(source)) continue;
@@ -94,7 +94,7 @@ public class ObservableGenerator : ISourceGenerator
 
     private string GenerateAttributes(IPropertySymbol propSymbol)
     {
-        if (!GeneratorHelper.HasObservableColumnAttr(propSymbol)) return "";
+        if (!GeneratorHelper.HasObColumnAttr(propSymbol)) return "";
 
         var typeSymbol = propSymbol.Type;
         if (GeneratorHelper.IsPrimary(typeSymbol)) return "";

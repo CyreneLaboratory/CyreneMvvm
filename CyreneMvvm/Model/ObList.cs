@@ -6,19 +6,19 @@ using System.Linq;
 
 namespace CyreneMvvm.Model;
 
-public class ObservableList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
+public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     IList<T>, IReadOnlyCollection<T>, IReadOnlyList<T>, INotifyCollectionChanged, INotifyCallback
 {
     #region Internal
 
     private readonly List<T> Internal;
 
-    public ObservableList()
+    public ObList()
     {
         Internal = [];
     }
 
-    public ObservableList(IEnumerable<T> collection)
+    public ObList(IEnumerable<T> collection)
     {
         Internal = [.. collection];
         foreach (var item in Internal) RegisterValue(item);

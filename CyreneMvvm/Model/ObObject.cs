@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 
 namespace CyreneMvvm.Model;
 
-public abstract class ObservableObject : INotifyPropertyChanged, INotifyCallback
+public abstract class ObObject : INotifyPropertyChanged, INotifyCallback
 {
     private readonly Dictionary<object, Action> ParentObservers = [];
     public event PropertyChangedEventHandler? PropertyChanged;
