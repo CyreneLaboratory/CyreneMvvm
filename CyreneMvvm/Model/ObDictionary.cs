@@ -7,7 +7,7 @@ using System.Linq;
 
 namespace CyreneMvvm.Model;
 
-public class ObservableDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>>,
+public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>>,
     IEnumerable<KeyValuePair<TKey, TValue>>, IEnumerable, IDictionary<TKey, TValue>,
     IReadOnlyCollection<KeyValuePair<TKey, TValue>>, INotifyCollectionChanged, INotifyCallback where TKey : notnull
 {
@@ -15,19 +15,19 @@ public class ObservableDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey,
 
     private readonly Dictionary<TKey, TValue> Internal;
 
-    public ObservableDictionary()
+    public ObDictionary()
     {
         Internal = [];
     }
 
 #pragma warning disable IDE0028
 
-    public ObservableDictionary(int capacity)
+    public ObDictionary(int capacity)
     {
         Internal = new(capacity);
     }
 
-    public ObservableDictionary(IDictionary<TKey, TValue> dictionary)
+    public ObDictionary(IDictionary<TKey, TValue> dictionary)
     {
         Internal = new(dictionary);
         foreach (var item in Internal.Values) RegisterValue(item);
