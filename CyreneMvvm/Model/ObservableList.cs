@@ -2,12 +2,12 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
-using System.ComponentModel;
+using System.Linq;
 
 namespace CyreneMvvm.Model;
 
-public class ObservableList<T> : ICollection<T>, IEnumerable<T>, IEnumerable, IList<T>,
-    IReadOnlyCollection<T>, IReadOnlyList<T>, INotifyCollectionChanged, INotifyPropertyChanged
+public class ObservableList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
+    IList<T>, IReadOnlyCollection<T>, IReadOnlyList<T>, INotifyCollectionChanged, INotifyCallback
 {
     #region Internal
 
@@ -21,6 +21,7 @@ public class ObservableList<T> : ICollection<T>, IEnumerable<T>, IEnumerable, IL
     public ObservableList(IEnumerable<T> collection)
     {
         Internal = [.. collection];
+        foreach (var item in Internal) RegisterValue(item);
     }
 
     public T this[int index]
@@ -30,6 +31,8 @@ public class ObservableList<T> : ICollection<T>, IEnumerable<T>, IEnumerable, IL
         {
             var oldItem = Internal[index];
             Internal[index] = value;
+            if (!Internal.Contains(oldItem)) UnregisterValue(oldItem);
+            RegisterValue(value);
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Replace, value, oldItem, index));
         }
     }
@@ -40,17 +43,20 @@ public class ObservableList<T> : ICollection<T>, IEnumerable<T>, IEnumerable, IL
     public void Add(T item)
     {
         Internal.Add(item);
+        RegisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, Internal.Count - 1));
     }
 
     public void AddRange(IEnumerable<T> items)
     {
         Internal.AddRange(items);
+        foreach (var item in items) RegisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
     public void Clear()
     {
+        foreach (var item in Internal) UnregisterValue(item);
         Internal.Clear();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
@@ -83,6 +89,7 @@ public class ObservableList<T> : ICollection<T>, IEnumerable<T>, IEnumerable, IL
     public void Insert(int index, T item)
     {
         Internal.Insert(index, item);
+        RegisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, index));
     }
 
@@ -90,7 +97,11 @@ public class ObservableList<T> : ICollection<T>, IEnumerable<T>, IEnumerable, IL
     {
         var index = Internal.IndexOf(item);
         var removed = Internal.Remove(item);
-        if (removed) OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
+        if (removed)
+        {
+            if (!Internal.Contains(item)) UnregisterValue(item);
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
+        }
         return removed;
     }
 
@@ -98,47 +109,58 @@ public class ObservableList<T> : ICollection<T>, IEnumerable<T>, IEnumerable, IL
     {
         var item = Internal[index];
         Internal.RemoveAt(index);
+        if (!Internal.Contains(item)) UnregisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
     }
 
     public int RemoveAll(Predicate<T> match)
     {
+        var toRemove = Internal.FindAll(match);
         var removed = Internal.RemoveAll(match);
-        if (removed > 0) OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        if (removed > 0)
+        {
+            foreach (var item in toRemove)
+                if (!Internal.Contains(item)) UnregisterValue(item);
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        }
         return removed;
     }
 
     #endregion
 
-    internal string? ParentPropertyName;
-    internal Action<string?>? ParentPropertyChanged;
-    public event PropertyChangedEventHandler? PropertyChanged;
+    private readonly Dictionary<object, Action> ParentObservers = [];
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
-    protected virtual void OnPropertyChanged(string? propName = null)
+    protected virtual void OnParentChanged()
     {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
+        foreach (var callback in ParentObservers.Values.ToArray()) callback();
     }
 
     protected virtual void OnCollectionChanged(NotifyCollectionChangedEventArgs e)
     {
         CollectionChanged?.Invoke(this, e);
-        OnPropertyChanged(nameof(Count));
-        OnPropertyChanged("Item[]");
-        ParentPropertyChanged?.Invoke(ParentPropertyName);
+        OnParentChanged();
     }
 
-    public void RegisterParentProp(Action<string?> parent, string? propName = null)
+    public void RegisterParent(object owner, Action callback)
     {
-        if (ParentPropertyChanged != null) return;
-
-        ParentPropertyName = propName;
-        ParentPropertyChanged = parent;
+        ParentObservers[owner] = callback;
     }
 
-    public void UnregisterParentProp()
+    public void UnregisterParent(object owner)
     {
-        ParentPropertyName = null;
-        ParentPropertyChanged = null;
+        ParentObservers.Remove(owner);
+    }
+
+    private void RegisterValue(T item)
+    {
+        if (item is INotifyCallback sub)
+            sub.RegisterParent(this, OnParentChanged);
+    }
+
+    private void UnregisterValue(T item)
+    {
+        if (item is INotifyCallback sub)
+            sub.UnregisterParent(this);
     }
 }
