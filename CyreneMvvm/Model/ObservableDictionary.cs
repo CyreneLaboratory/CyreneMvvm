@@ -2,14 +2,14 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Specialized;
-using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 
 namespace CyreneMvvm.Model;
 
 public class ObservableDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>>,
     IEnumerable<KeyValuePair<TKey, TValue>>, IEnumerable, IDictionary<TKey, TValue>,
-    IReadOnlyCollection<KeyValuePair<TKey, TValue>>, INotifyCollectionChanged, INotifyPropertyChanged where TKey : notnull
+    IReadOnlyCollection<KeyValuePair<TKey, TValue>>, INotifyCollectionChanged, INotifyCallback where TKey : notnull
 {
     #region Internal
 
@@ -30,6 +30,7 @@ public class ObservableDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey,
     public ObservableDictionary(IDictionary<TKey, TValue> dictionary)
     {
         Internal = new(dictionary);
+        foreach (var item in Internal.Values) RegisterValue(item);
     }
 
 #pragma warning restore IDE0028
@@ -39,11 +40,14 @@ public class ObservableDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey,
         get => Internal[key];
         set
         {
-            var isNewKey = !Internal.ContainsKey(key);
-            var oldValue = isNewKey ? default : Internal[key];
-            Internal[key] = value;
+            var containsKey = Internal.ContainsKey(key);
+            var oldValue = containsKey ? Internal[key] : default!;
 
-            if (isNewKey)
+            Internal[key] = value;
+            if (!Internal.ContainsValue(oldValue)) UnregisterValue(oldValue);
+            RegisterValue(value);
+
+            if (!containsKey)
                 OnCollectionChanged(new NotifyCollectionChangedEventArgs(
                     NotifyCollectionChangedAction.Add, new KeyValuePair<TKey, TValue>(key, value)));
             else
@@ -65,12 +69,14 @@ public class ObservableDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey,
     public void Add(TKey key, TValue value)
     {
         Internal.Add(key, value);
+        RegisterValue(value);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(
             NotifyCollectionChangedAction.Add, new KeyValuePair<TKey, TValue>(key, value)));
     }
 
     public void Clear()
     {
+        foreach (var item in Internal.Values) UnregisterValue(item);
         Internal.Clear();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
@@ -108,16 +114,24 @@ public class ObservableDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey,
     public bool Remove(TKey key, [MaybeNullWhen(false)] out TValue value)
     {
         var removed = Internal.Remove(key, out value);
-        if (removed) OnCollectionChanged(new NotifyCollectionChangedEventArgs(
-            NotifyCollectionChangedAction.Remove, new KeyValuePair<TKey, TValue>(key, value!)));
+        if (removed)
+        {
+            if (!Internal.ContainsValue(value!)) UnregisterValue(value!);
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(
+                NotifyCollectionChangedAction.Remove, new KeyValuePair<TKey, TValue>(key, value!)));
+        }
         return removed;
     }
 
     bool ICollection<KeyValuePair<TKey, TValue>>.Remove(KeyValuePair<TKey, TValue> item)
     {
         var removed = ((ICollection<KeyValuePair<TKey, TValue>>)Internal).Remove(item);
-        if (removed) OnCollectionChanged(new NotifyCollectionChangedEventArgs(
-            NotifyCollectionChangedAction.Remove, item));
+        if (removed)
+        {
+            if (!Internal.ContainsValue(item.Value)) UnregisterValue(item.Value);
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(
+                NotifyCollectionChangedAction.Remove, item));
+        }
         return removed;
     }
 
@@ -129,43 +143,50 @@ public class ObservableDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey,
     public bool TryAdd(TKey key, TValue value)
     {
         var added = Internal.TryAdd(key, value);
-        if (added) OnCollectionChanged(new NotifyCollectionChangedEventArgs(
-            NotifyCollectionChangedAction.Add, new KeyValuePair<TKey, TValue>(key, value)));
+        if (added)
+        {
+            RegisterValue(value);
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(
+                NotifyCollectionChangedAction.Add, new KeyValuePair<TKey, TValue>(key, value)));
+        }
         return added;
     }
 
     #endregion
 
-    internal string? ParentPropertyName;
-    internal Action<string?>? ParentPropertyChanged;
-    public event PropertyChangedEventHandler? PropertyChanged;
+    private readonly Dictionary<object, Action> ParentObservers = [];
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
-    protected virtual void OnPropertyChanged(string? propName = null)
+    protected virtual void OnParentChanged()
     {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propName));
+        foreach (var callback in ParentObservers.Values.ToArray()) callback();
     }
 
     protected virtual void OnCollectionChanged(NotifyCollectionChangedEventArgs e)
     {
         CollectionChanged?.Invoke(this, e);
-        OnPropertyChanged(nameof(Count));
-        OnPropertyChanged(nameof(Keys));
-        OnPropertyChanged(nameof(Values));
-        ParentPropertyChanged?.Invoke(ParentPropertyName);
+        OnParentChanged();
     }
 
-    public void RegisterParentProp(Action<string?> parent, string? propName = null)
+    public void RegisterParent(object owner, Action callback)
     {
-        if (ParentPropertyChanged != null) return;
-
-        ParentPropertyName = propName;
-        ParentPropertyChanged = parent;
+        ParentObservers[owner] = callback;
     }
 
-    public void UnregisterParentProp()
+    public void UnregisterParent(object owner)
     {
-        ParentPropertyName = null;
-        ParentPropertyChanged = null;
+        ParentObservers.Remove(owner);
+    }
+
+    private void RegisterValue(TValue item)
+    {
+        if (item is INotifyCallback sub)
+            sub.RegisterParent(this, OnParentChanged);
+    }
+
+    private void UnregisterValue(TValue item)
+    {
+        if (item is INotifyCallback sub)
+            sub.UnregisterParent(this);
     }
 }
