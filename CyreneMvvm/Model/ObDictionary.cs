@@ -9,7 +9,8 @@ namespace CyreneMvvm.Model;
 
 public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>>,
     IEnumerable<KeyValuePair<TKey, TValue>>, IEnumerable, IDictionary<TKey, TValue>,
-    IReadOnlyCollection<KeyValuePair<TKey, TValue>>, INotifyCollectionChanged, INotifyCallback where TKey : notnull
+    IReadOnlyCollection<KeyValuePair<TKey, TValue>>, IReadOnlyDictionary<TKey, TValue>,
+    INotifyCollectionChanged, INotifyCallback where TKey : notnull
 {
     #region Internal
 
@@ -22,15 +23,43 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
 
 #pragma warning disable IDE0028
 
+    public ObDictionary(IDictionary<TKey, TValue> dictionary)
+    {
+        Internal = new(dictionary);
+        foreach (var item in Internal.Values) RegisterValue(item);
+    }
+
+    public ObDictionary(IEnumerable<KeyValuePair<TKey, TValue>> collection)
+    {
+        Internal = new(collection);
+        foreach (var item in Internal.Values) RegisterValue(item);
+    }
+
+    public ObDictionary(IEqualityComparer<TKey>? comparer)
+    {
+        Internal = new(comparer);
+    }
+
     public ObDictionary(int capacity)
     {
         Internal = new(capacity);
     }
 
-    public ObDictionary(IDictionary<TKey, TValue> dictionary)
+    public ObDictionary(IDictionary<TKey, TValue> dictionary, IEqualityComparer<TKey>? comparer)
     {
-        Internal = new(dictionary);
+        Internal = new(dictionary, comparer);
         foreach (var item in Internal.Values) RegisterValue(item);
+    }
+
+    public ObDictionary(IEnumerable<KeyValuePair<TKey, TValue>> collection, IEqualityComparer<TKey>? comparer)
+    {
+        Internal = new(collection, comparer);
+        foreach (var item in Internal.Values) RegisterValue(item);
+    }
+
+    public ObDictionary(int capacity, IEqualityComparer<TKey>? comparer)
+    {
+        Internal = new(capacity, comparer);
     }
 
 #pragma warning restore IDE0028
@@ -58,13 +87,13 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
 
     public ICollection<TKey> Keys => Internal.Keys;
     public ICollection<TValue> Values => Internal.Values;
+    public IEqualityComparer<TKey> Comparer => Internal.Comparer;
     public int Count => Internal.Count;
     public bool IsReadOnly => false;
+    IEnumerable<TKey> IReadOnlyDictionary<TKey, TValue>.Keys => Internal.Keys;
+    IEnumerable<TValue> IReadOnlyDictionary<TKey, TValue>.Values => Internal.Values;
 
-    public void Add(KeyValuePair<TKey, TValue> item)
-    {
-        Add(item.Key, item.Value);
-    }
+    public void Add(KeyValuePair<TKey, TValue> item) => Add(item.Key, item.Value);
 
     public void Add(TKey key, TValue value)
     {
@@ -81,35 +110,19 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
-    bool ICollection<KeyValuePair<TKey, TValue>>.Contains(KeyValuePair<TKey, TValue> item)
-    {
-        return ((ICollection<KeyValuePair<TKey, TValue>>)Internal).Contains(item);
-    }
+    bool ICollection<KeyValuePair<TKey, TValue>>.Contains(KeyValuePair<TKey, TValue> item) => ((ICollection<KeyValuePair<TKey, TValue>>)Internal).Contains(item);
 
-    public bool ContainsKey(TKey key)
-    {
-        return Internal.ContainsKey(key);
-    }
+    public bool ContainsKey(TKey key) => Internal.ContainsKey(key);
 
-    public void CopyTo(KeyValuePair<TKey, TValue>[] array, int arrayIndex)
-    {
-        ((ICollection<KeyValuePair<TKey, TValue>>)Internal).CopyTo(array, arrayIndex);
-    }
+    public bool ContainsValue(TValue value) => Internal.ContainsValue(value);
 
-    public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator()
-    {
-        return Internal.GetEnumerator();
-    }
+    public int EnsureCapacity(int capacity) => Internal.EnsureCapacity(capacity);
 
-    IEnumerator IEnumerable.GetEnumerator()
-    {
-        return GetEnumerator();
-    }
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    public bool Remove(TKey key)
-    {
-        return Remove(key, out _);
-    }
+    public IEnumerator<KeyValuePair<TKey, TValue>> GetEnumerator() => Internal.GetEnumerator();
+
+    public bool Remove(TKey key) => Remove(key, out _);
 
     public bool Remove(TKey key, [MaybeNullWhen(false)] out TValue value)
     {
@@ -135,10 +148,9 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
         return removed;
     }
 
-    public bool TryGetValue(TKey key, [MaybeNullWhen(false)] out TValue value)
-    {
-        return Internal.TryGetValue(key, out value);
-    }
+    public void TrimExcess() => Internal.TrimExcess();
+
+    public void TrimExcess(int capacity) => Internal.TrimExcess(capacity);
 
     public bool TryAdd(TKey key, TValue value)
     {
@@ -151,6 +163,10 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
         }
         return added;
     }
+
+    public bool TryGetValue(TKey key, [MaybeNullWhen(false)] out TValue value) => Internal.TryGetValue(key, out value);
+
+    public void CopyTo(KeyValuePair<TKey, TValue>[] array, int arrayIndex) => ((ICollection<KeyValuePair<TKey, TValue>>)Internal).CopyTo(array, arrayIndex);
 
     #endregion
 
