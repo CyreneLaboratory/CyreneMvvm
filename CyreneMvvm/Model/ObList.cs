@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Linq;
@@ -9,9 +10,40 @@ namespace CyreneMvvm.Model;
 public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     IList<T>, IReadOnlyCollection<T>, IReadOnlyList<T>, INotifyCollectionChanged, INotifyCallback
 {
+    private readonly object SyncRoot = new();
+
     #region Internal
 
     private readonly List<T> Internal;
+    private readonly Dictionary<INotifyCallback, int> CallbackCounts = new(ReferenceEqualityComparer.Instance);
+
+    private bool TryIncrementCount(T item)
+    {
+        if (item is INotifyCallback sub)
+        {
+            CallbackCounts.TryGetValue(sub, out var count);
+            CallbackCounts[sub] = count + 1;
+            return count == 0;
+        }
+        return false;
+    }
+
+    private bool TryDecrementCount(T item)
+    {
+        if (item is INotifyCallback sub)
+        {
+            if (CallbackCounts.TryGetValue(sub, out var count))
+            {
+                if (count <= 1)
+                {
+                    CallbackCounts.Remove(sub);
+                    return true;
+                }
+                CallbackCounts[sub] = count - 1;
+            }
+        }
+        return false;
+    }
 
     public ObList()
     {
@@ -30,132 +62,402 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     public ObList(IEnumerable<T> collection)
     {
         Internal = [.. collection];
-        foreach (var item in Internal) RegisterValue(item);
+        foreach (var item in Internal)
+        {
+            if (TryIncrementCount(item)) RegisterValue(item);
+        }
     }
 
     public T this[int index]
     {
-        get => Internal[index];
+        get
+        {
+            lock (SyncRoot)
+            {
+                return Internal[index];
+            }
+        }
         set
         {
-            var oldItem = Internal[index];
-            Internal[index] = value;
-            if (!Internal.Contains(oldItem)) UnregisterValue(oldItem);
-            RegisterValue(value);
+            T oldItem;
+            bool shouldUnregisterOld;
+            bool shouldRegisterNew;
+            lock (SyncRoot)
+            {
+                oldItem = Internal[index];
+                Internal[index] = value;
+                shouldUnregisterOld = TryDecrementCount(oldItem);
+                shouldRegisterNew = TryIncrementCount(value);
+            }
+
+            if (shouldUnregisterOld) UnregisterValue(oldItem);
+            if (shouldRegisterNew) RegisterValue(value);
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Replace, value, oldItem, index));
         }
     }
 
-    public int Count => Internal.Count;
+    public int Count
+    {
+        get
+        {
+            lock (SyncRoot)
+            {
+                return Internal.Count;
+            }
+        }
+    }
+
     public bool IsReadOnly => false;
+
     public int Capacity
     {
-        get => Internal.Capacity;
-        set => Internal.Capacity = value;
+        get
+        {
+            lock (SyncRoot)
+            {
+                return Internal.Capacity;
+            }
+        }
+        set
+        {
+            lock (SyncRoot)
+            {
+                Internal.Capacity = value;
+            }
+        }
     }
 
     public void Add(T item)
     {
-        Internal.Add(item);
-        RegisterValue(item);
-        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, Internal.Count - 1));
+        int newIndex;
+        bool shouldRegister;
+        lock (SyncRoot)
+        {
+            Internal.Add(item);
+            newIndex = Internal.Count - 1;
+            shouldRegister = TryIncrementCount(item);
+        }
+
+        if (shouldRegister) RegisterValue(item);
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, newIndex));
     }
 
     public void AddRange(IEnumerable<T> items)
     {
-        Internal.AddRange(items);
-        foreach (var item in items) RegisterValue(item);
+        var list = items.ToList();
+        var toRegister = new List<T>();
+        lock (SyncRoot)
+        {
+            Internal.AddRange(list);
+            foreach (var item in list)
+            {
+                if (TryIncrementCount(item)) toRegister.Add(item);
+            }
+        }
+
+        foreach (var item in toRegister) RegisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
-    public System.Collections.ObjectModel.ReadOnlyCollection<T> AsReadOnly() => Internal.AsReadOnly();
+    public System.Collections.ObjectModel.ReadOnlyCollection<T> AsReadOnly()
+    {
+        return new System.Collections.ObjectModel.ReadOnlyCollection<T>(this);
+    }
 
-    public int BinarySearch(int index, int count, T item, IComparer<T>? comparer) => Internal.BinarySearch(index, count, item, comparer);
+    public int BinarySearch(int index, int count, T item, IComparer<T>? comparer)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.BinarySearch(index, count, item, comparer);
+        }
+    }
 
-    public int BinarySearch(T item) => Internal.BinarySearch(item);
+    public int BinarySearch(T item)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.BinarySearch(item);
+        }
+    }
 
-    public int BinarySearch(T item, IComparer<T>? comparer) => Internal.BinarySearch(item, comparer);
+    public int BinarySearch(T item, IComparer<T>? comparer)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.BinarySearch(item, comparer);
+        }
+    }
 
     public void Clear()
     {
-        foreach (var item in Internal) UnregisterValue(item);
-        Internal.Clear();
+        List<INotifyCallback> toUnregister;
+        lock (SyncRoot)
+        {
+            toUnregister = [.. CallbackCounts.Keys];
+            CallbackCounts.Clear();
+            Internal.Clear();
+        }
+
+        foreach (var sub in toUnregister) sub.UnregisterParent(this);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
-    public bool Contains(T item) => Internal.Contains(item);
+    public bool Contains(T item)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.Contains(item);
+        }
+    }
 
-    public List<TOutput> ConvertAll<TOutput>(Converter<T, TOutput> converter) => Internal.ConvertAll(converter);
+    public List<TOutput> ConvertAll<TOutput>(Converter<T, TOutput> converter)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.ConvertAll(converter);
+        }
+    }
 
-    public void CopyTo(T[] array, int arrayIndex) => Internal.CopyTo(array, arrayIndex);
+    public void CopyTo(T[] array, int arrayIndex)
+    {
+        lock (SyncRoot)
+        {
+            Internal.CopyTo(array, arrayIndex);
+        }
+    }
 
-    public void CopyTo(T[] array) => Internal.CopyTo(array);
+    public void CopyTo(T[] array)
+    {
+        lock (SyncRoot)
+        {
+            Internal.CopyTo(array);
+        }
+    }
 
-    public void CopyTo(int index, T[] array, int arrayIndex, int count) => Internal.CopyTo(index, array, arrayIndex, count);
+    public void CopyTo(int index, T[] array, int arrayIndex, int count)
+    {
+        lock (SyncRoot)
+        {
+            Internal.CopyTo(index, array, arrayIndex, count);
+        }
+    }
 
-    public int EnsureCapacity(int capacity) => Internal.EnsureCapacity(capacity);
+    public int EnsureCapacity(int capacity)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.EnsureCapacity(capacity);
+        }
+    }
 
-    public bool Exists(Predicate<T> match) => Internal.Exists(match);
+    public bool Exists(Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.Exists(match);
+        }
+    }
 
-    public T? Find(Predicate<T> match) => Internal.Find(match);
+    public T? Find(Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.Find(match);
+        }
+    }
 
-    public List<T> FindAll(Predicate<T> match) => Internal.FindAll(match);
+    public List<T> FindAll(Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.FindAll(match);
+        }
+    }
 
-    public int FindIndex(int startIndex, int count, Predicate<T> match) => Internal.FindIndex(startIndex, count, match);
+    public int FindIndex(int startIndex, int count, Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.FindIndex(startIndex, count, match);
+        }
+    }
 
-    public int FindIndex(int startIndex, Predicate<T> match) => Internal.FindIndex(startIndex, match);
+    public int FindIndex(int startIndex, Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.FindIndex(startIndex, match);
+        }
+    }
 
-    public int FindIndex(Predicate<T> match) => Internal.FindIndex(match);
+    public int FindIndex(Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.FindIndex(match);
+        }
+    }
 
-    public T? FindLast(Predicate<T> match) => Internal.FindLast(match);
+    public T? FindLast(Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.FindLast(match);
+        }
+    }
 
-    public int FindLastIndex(int startIndex, int count, Predicate<T> match) => Internal.FindLastIndex(startIndex, count, match);
+    public int FindLastIndex(int startIndex, int count, Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.FindLastIndex(startIndex, count, match);
+        }
+    }
 
-    public int FindLastIndex(int startIndex, Predicate<T> match) => Internal.FindLastIndex(startIndex, match);
+    public int FindLastIndex(int startIndex, Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.FindLastIndex(startIndex, match);
+        }
+    }
 
-    public int FindLastIndex(Predicate<T> match) => Internal.FindLastIndex(match);
+    public int FindLastIndex(Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.FindLastIndex(match);
+        }
+    }
 
-    public void ForEach(Action<T> action) => Internal.ForEach(action);
+    public void ForEach(Action<T> action)
+    {
+        List<T> snapshot;
+        lock (SyncRoot)
+        {
+            snapshot = [.. Internal];
+        }
+
+        snapshot.ForEach(action);
+    }
 
     IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
 
-    public IEnumerator<T> GetEnumerator() => Internal.GetEnumerator();
+    public IEnumerator<T> GetEnumerator()
+    {
+        List<T> snapshot;
+        lock (SyncRoot)
+        {
+            snapshot = [.. Internal];
+        }
 
-    public List<T> GetRange(int index, int count) => Internal.GetRange(index, count);
+        return snapshot.GetEnumerator();
+    }
 
-    public int IndexOf(T item, int index, int count) => Internal.IndexOf(item, index, count);
+    public List<T> GetRange(int index, int count)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.GetRange(index, count);
+        }
+    }
 
-    public int IndexOf(T item, int index) => Internal.IndexOf(item, index);
+    public int IndexOf(T item, int index, int count)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.IndexOf(item, index, count);
+        }
+    }
 
-    public int IndexOf(T item) => Internal.IndexOf(item);
+    public int IndexOf(T item, int index)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.IndexOf(item, index);
+        }
+    }
+
+    public int IndexOf(T item)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.IndexOf(item);
+        }
+    }
 
     public void Insert(int index, T item)
     {
-        Internal.Insert(index, item);
-        RegisterValue(item);
+        bool shouldRegister;
+        lock (SyncRoot)
+        {
+            Internal.Insert(index, item);
+            shouldRegister = TryIncrementCount(item);
+        }
+
+        if (shouldRegister) RegisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, index));
     }
 
     public void InsertRange(int index, IEnumerable<T> collection)
     {
-        Internal.InsertRange(index, collection);
-        foreach (var item in collection) RegisterValue(item);
+        var list = collection.ToList();
+        var toRegister = new List<T>();
+        lock (SyncRoot)
+        {
+            Internal.InsertRange(index, list);
+            foreach (var item in list)
+            {
+                if (TryIncrementCount(item)) toRegister.Add(item);
+            }
+        }
+
+        foreach (var item in toRegister) RegisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
-    public int LastIndexOf(T item) => Internal.LastIndexOf(item);
+    public int LastIndexOf(T item)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.LastIndexOf(item);
+        }
+    }
 
-    public int LastIndexOf(T item, int index) => Internal.LastIndexOf(item, index);
+    public int LastIndexOf(T item, int index)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.LastIndexOf(item, index);
+        }
+    }
 
-    public int LastIndexOf(T item, int index, int count) => Internal.LastIndexOf(item, index, count);
+    public int LastIndexOf(T item, int index, int count)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.LastIndexOf(item, index, count);
+        }
+    }
 
     public bool Remove(T item)
     {
-        var index = Internal.IndexOf(item);
-        var removed = Internal.Remove(item);
+        int index;
+        bool removed;
+        var shouldUnregister = false;
+        lock (SyncRoot)
+        {
+            index = Internal.IndexOf(item);
+            removed = Internal.Remove(item);
+            if (removed)
+            {
+                shouldUnregister = TryDecrementCount(item);
+            }
+        }
+
         if (removed)
         {
-            if (!Internal.Contains(item)) UnregisterValue(item);
+            if (shouldUnregister) UnregisterValue(item);
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
         }
         return removed;
@@ -163,12 +465,24 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     public int RemoveAll(Predicate<T> match)
     {
-        var toRemove = Internal.FindAll(match);
-        var removed = Internal.RemoveAll(match);
+        List<T> toRemove;
+        int removed;
+        var toUnregister = new List<T>();
+        lock (SyncRoot)
+        {
+            toRemove = Internal.FindAll(match);
+            removed = Internal.RemoveAll(match);
+
+            if (removed > 0)
+                foreach (var item in toRemove)
+                {
+                    if (TryDecrementCount(item)) toUnregister.Add(item);
+                }
+        }
+
         if (removed > 0)
         {
-            foreach (var item in toRemove)
-                if (!Internal.Contains(item)) UnregisterValue(item);
+            foreach (var item in toUnregister) UnregisterValue(item);
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
         }
         return removed;
@@ -176,73 +490,138 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     public void RemoveAt(int index)
     {
-        var item = Internal[index];
-        Internal.RemoveAt(index);
-        if (!Internal.Contains(item)) UnregisterValue(item);
+        T item;
+        bool shouldUnregister;
+        lock (SyncRoot)
+        {
+            item = Internal[index];
+            Internal.RemoveAt(index);
+            shouldUnregister = TryDecrementCount(item);
+        }
+
+        if (shouldUnregister) UnregisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
     }
 
     public void RemoveRange(int index, int count)
     {
-        var toRemove = Internal.GetRange(index, count);
-        Internal.RemoveRange(index, count);
-        foreach (var item in toRemove)
-            if (!Internal.Contains(item)) UnregisterValue(item);
+        List<T> toRemove;
+        var toUnregister = new List<T>();
+        lock (SyncRoot)
+        {
+            toRemove = Internal.GetRange(index, count);
+            Internal.RemoveRange(index, count);
+
+            foreach (var item in toRemove)
+            {
+                if (TryDecrementCount(item)) toUnregister.Add(item);
+            }
+        }
+
+        foreach (var item in toUnregister) UnregisterValue(item);
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
     public void Reverse(int index, int count)
     {
-        Internal.Reverse(index, count);
+        lock (SyncRoot)
+        {
+            Internal.Reverse(index, count);
+        }
+
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
     public void Reverse()
     {
-        Internal.Reverse();
+        lock (SyncRoot)
+        {
+            Internal.Reverse();
+        }
+
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
-    public List<T> Slice(int start, int length) => Internal.GetRange(start, length);
+    public List<T> Slice(int start, int length)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.GetRange(start, length);
+        }
+    }
 
     public void Sort(IComparer<T>? comparer)
     {
-        Internal.Sort(comparer);
+        lock (SyncRoot)
+        {
+            Internal.Sort(comparer);
+        }
+
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
     public void Sort(Comparison<T> comparison)
     {
-        Internal.Sort(comparison);
+        lock (SyncRoot)
+        {
+            Internal.Sort(comparison);
+        }
+
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
     public void Sort(int index, int count, IComparer<T>? comparer)
     {
-        Internal.Sort(index, count, comparer);
+        lock (SyncRoot)
+        {
+            Internal.Sort(index, count, comparer);
+        }
+
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
     public void Sort()
     {
-        Internal.Sort();
+        lock (SyncRoot)
+        {
+            Internal.Sort();
+        }
+
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
-    public T[] ToArray() => [.. Internal];
+    public T[] ToArray()
+    {
+        lock (SyncRoot)
+        {
+            return [.. Internal];
+        }
+    }
 
-    public void TrimExcess() => Internal.TrimExcess();
+    public void TrimExcess()
+    {
+        lock (SyncRoot)
+        {
+            Internal.TrimExcess();
+        }
+    }
 
-    public bool TrueForAll(Predicate<T> match) => Internal.TrueForAll(match);
+    public bool TrueForAll(Predicate<T> match)
+    {
+        lock (SyncRoot)
+        {
+            return Internal.TrueForAll(match);
+        }
+    }
 
     #endregion
 
-    private readonly Dictionary<object, Action> ParentObservers = [];
+    private readonly ConcurrentDictionary<object, Action> ParentObservers = [];
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
     protected virtual void OnParentChanged()
     {
-        foreach (var callback in ParentObservers.Values.ToArray()) callback();
+        foreach (var callback in ParentObservers.Values) callback();
     }
 
     protected virtual void OnCollectionChanged(NotifyCollectionChangedEventArgs e)
@@ -258,7 +637,7 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     public void UnregisterParent(object owner)
     {
-        ParentObservers.Remove(owner);
+        ParentObservers.TryRemove(owner, out _);
     }
 
     private void RegisterValue(T item)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -8,7 +9,7 @@ namespace CyreneMvvm.Model;
 
 public abstract class ObObject : INotifyPropertyChanged, INotifyCallback
 {
-    private readonly Dictionary<object, Action> ParentObservers = [];
+    private readonly ConcurrentDictionary<object, Action> ParentObservers = [];
     public event PropertyChangedEventHandler? PropertyChanged;
 
     protected virtual void OnParentChanged()
@@ -34,6 +35,6 @@ public abstract class ObObject : INotifyPropertyChanged, INotifyCallback
 
     public void UnregisterParent(object owner)
     {
-        ParentObservers.Remove(owner);
+        ParentObservers.TryRemove(owner, out _);
     }
 }
