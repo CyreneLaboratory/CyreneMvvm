@@ -13,6 +13,7 @@ public static class GeneratorHelper
     public const string ObDictionary = "CyreneMvvm.Model.ObDictionary";
     public const string ObProp = "CyreneMvvm.Attributes.ObPropAttribute";
     public const string ObColumn = "CyreneMvvm.Attributes.ObColumnAttribute";
+    public const string ObShadow = "CyreneMvvm.Attributes.ObShadowAttribute";
 
     public static bool IsPrimary(ITypeSymbol typeSymbol)
     {
@@ -82,6 +83,26 @@ public static class GeneratorHelper
             if (attribute.AttributeClass?.ToDisplayString().Contains(ObColumn) == true)
                 return true;
         return false;
+    }
+
+    public static bool HasObShadowAttr(INamedTypeSymbol classSymbol)
+    {
+        var current = classSymbol;
+        while (current != null)
+        {
+            foreach (var attribute in current.GetAttributes())
+                if (attribute.AttributeClass?.ToDisplayString().Contains(ObShadow) == true)
+                    return true;
+            current = current.BaseType;
+        }
+        return false;
+    }
+
+    public static bool ShouldGenShadow(INamedTypeSymbol classSymbol, IPropertySymbol propSymbol)
+    {
+        if (!HasObShadowAttr(classSymbol)) return false;
+        if (IsPrimary(propSymbol.Type)) return false;
+        return true;
     }
 
     public static bool ShouldGenProp(PropertyDeclarationSyntax prop, SemanticModel model)

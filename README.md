@@ -63,7 +63,7 @@ public partial class Test : ObObject
 ### Sql列标记 (定制)
 
 - 为属性添加 `[ObColumn]` 以根据属性自动生成对应的列标记
-- 这是一个高度定制化的功能，仅适用于以Json并使用SugarSql的项目, 暂时不支持自定义列标记规则
+- 这是一个高度定制化的功能，仅适用于以Json并使用FreeSql的项目, 暂时不支持自定义列标记规则
 
 ## 要求
 

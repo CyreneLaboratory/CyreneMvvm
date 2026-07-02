@@ -77,14 +77,14 @@ public class ObservableGenerator : ISourceGenerator
         {
             var propSymbol = model.GetDeclaredSymbol(prop);
             if (propSymbol == null) continue;
-            sb.AppendLine(GenerateProperty(propSymbol));
+            sb.AppendLine(GeneratorHelper.ShouldGenShadow(classSymbol, propSymbol) ? GenerateIgnoreProperty(propSymbol) : GenerateProperty(propSymbol));
         }
 
         foreach (var collection in collections)
         {
             var propSymbol = model.GetDeclaredSymbol(collection);
             if (propSymbol == null) continue;
-            sb.AppendLine(GenerateCollection(propSymbol));
+            sb.AppendLine(GeneratorHelper.ShouldGenShadow(classSymbol, propSymbol) ? GenerateIgnoreCollection(propSymbol) : GenerateCollection(propSymbol));
         }
 
         sb.AppendLine("}");
@@ -92,23 +92,10 @@ public class ObservableGenerator : ISourceGenerator
         return sb.ToString();
     }
 
-    private string GenerateAttributes(IPropertySymbol propSymbol)
+    private string GenerateIgnoreAttribute(IPropertySymbol propSymbol)
     {
-        if (!GeneratorHelper.HasObColumnAttr(propSymbol)) return "";
-
-        var typeSymbol = propSymbol.Type;
-        if (GeneratorHelper.IsPrimary(typeSymbol)) return "";
-
-        var sb = new StringBuilder();
-
-        sb.Append("    [global::SqlSugar.SugarColumn(ColumnDataType = \"TEXT\"");
-        if (typeSymbol.SpecialType != SpecialType.System_String) sb.Append(", IsJson = true");
-        if (typeSymbol.NullableAnnotation == NullableAnnotation.Annotated ||
-            typeSymbol is INamedTypeSymbol n && n.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T)
-            sb.Append(", IsNullable = true");
-        sb.Append(")]");
-
-        return sb.ToString();
+        if (GeneratorHelper.IsPrimary(propSymbol.Type)) return "";
+        return "    [global::FreeSql.DataAnnotations.Column(IsIgnore = true)]";
     }
 
     private string GenerateProperty(IPropertySymbol propSymbol)
@@ -125,7 +112,6 @@ public class ObservableGenerator : ISourceGenerator
         sb.AppendLine("    }");
         sb.AppendLine();
 
-        sb.AppendLine(GenerateAttributes(propSymbol));
         sb.AppendLine($"    public partial {propType} {propName}");
         sb.AppendLine("    {");
         sb.AppendLine("        get");
@@ -140,10 +126,62 @@ public class ObservableGenerator : ISourceGenerator
         if (isRef) sb.AppendLine($"                if (field is global::{GeneratorHelper.INotifyCallback} u) u.UnregisterParent(this);");
         sb.AppendLine("                field = value;");
         if (isRef) sb.AppendLine($"                if (field is global::{GeneratorHelper.INotifyCallback} r) r.RegisterParent(this, _On{propName}Changed);");
-        sb.AppendLine("                OnPropertyChanged();");
+        sb.AppendLine($"                _On{propName}Changed();");
         sb.AppendLine("            }");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
+
+        return sb.ToString();
+    }
+
+    private string GenerateIgnoreProperty(IPropertySymbol propSymbol)
+    {
+        var propName = propSymbol.Name;
+        var propType = propSymbol.Type.ToDisplayString();
+        var fieldName = $"{char.ToLower(propName[0])}{propName.Substring(1)}";
+        var lockName = $"{fieldName}Lock";
+        var flagName = $"{fieldName}Flag";
+        var isRef = propSymbol.Type.IsReferenceType && propSymbol.Type.SpecialType != SpecialType.System_String;
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine($"    private readonly object {lockName} = new();");
+        sb.AppendLine($"    private bool {flagName};");
+        sb.AppendLine();
+
+        sb.AppendLine($"    private void _On{propName}Changed()");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        OnPropertyChanged(nameof({propName}));");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        sb.AppendLine(GenerateIgnoreAttribute(propSymbol));
+        sb.AppendLine($"    public partial {propType} {propName}");
+        sb.AppendLine("    {");
+        sb.AppendLine("        get");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            lock ({lockName})");
+        sb.AppendLine("            {");
+        if (isRef) sb.AppendLine($"                if (field is global::{GeneratorHelper.INotifyCallback} r) r.RegisterParent(this, _On{propName}Changed);");
+        sb.AppendLine("                return field;");
+        sb.AppendLine("            }");
+        sb.AppendLine("        }");
+        sb.AppendLine("        set");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            lock ({lockName})");
+        sb.AppendLine("            {");
+        sb.AppendLine($"                if (!global::System.Collections.Generic.EqualityComparer<{propType}>.Default.Equals(field, value))");
+        sb.AppendLine("                {");
+        if (isRef) sb.AppendLine($"                    if (field is global::{GeneratorHelper.INotifyCallback} u) u.UnregisterParent(this);");
+        sb.AppendLine("                    field = value;");
+        if (isRef) sb.AppendLine($"                    if (field is global::{GeneratorHelper.INotifyCallback} r) r.RegisterParent(this, _On{propName}Changed);");
+        sb.AppendLine($"                    if (!{flagName}) _On{propName}Changed();");
+        sb.AppendLine("                }");
+        sb.AppendLine("            }");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+
+        sb.Append(GenerateShadowProperty(propSymbol));
 
         return sb.ToString();
     }
@@ -162,7 +200,6 @@ public class ObservableGenerator : ISourceGenerator
         sb.AppendLine("    }");
         sb.AppendLine();
 
-        sb.AppendLine(GenerateAttributes(propSymbol));
         sb.AppendLine($"    public partial {propType} {propName}");
         sb.AppendLine("    {");
         sb.AppendLine("        get");
@@ -177,7 +214,101 @@ public class ObservableGenerator : ISourceGenerator
         sb.AppendLine("                if (field != null) field.UnregisterParent(this);");
         sb.AppendLine("                field = value;");
         sb.AppendLine($"                {(nullable ? "if (field != null) " : "")}field.RegisterParent(this, _On{propName}Changed);");
-        sb.AppendLine("                OnPropertyChanged();");
+        sb.AppendLine($"                _On{propName}Changed();");
+        sb.AppendLine("            }");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+
+        return sb.ToString();
+    }
+
+    private string GenerateIgnoreCollection(IPropertySymbol propSymbol)
+    {
+        var propName = propSymbol.Name;
+        var propType = propSymbol.Type.ToDisplayString();
+        var fieldName = $"{char.ToLower(propName[0])}{propName.Substring(1)}";
+        var lockName = $"{fieldName}Lock";
+        var flagName = $"{fieldName}Flag";
+        var nullable = propSymbol.Type.NullableAnnotation == NullableAnnotation.Annotated;
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine($"    private readonly object {lockName} = new();");
+        sb.AppendLine($"    private bool {flagName};");
+        sb.AppendLine();
+
+        sb.AppendLine($"    private void _On{propName}Changed()");
+        sb.AppendLine("    {");
+        sb.AppendLine($"        OnPropertyChanged(nameof({propName}));");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+
+        sb.AppendLine(GenerateIgnoreAttribute(propSymbol));
+        sb.AppendLine($"    public partial {propType} {propName}");
+        sb.AppendLine("    {");
+        sb.AppendLine("        get");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            lock ({lockName})");
+        sb.AppendLine("            {");
+        sb.AppendLine($"                {(nullable ? "if (field != null) " : "")}field.RegisterParent(this, _On{propName}Changed);");
+        sb.AppendLine("                return field;");
+        sb.AppendLine("            }");
+        sb.AppendLine("        }");
+        sb.AppendLine("        set");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            lock ({lockName})");
+        sb.AppendLine("            {");
+        sb.AppendLine($"                if (!global::System.Collections.Generic.EqualityComparer<{propType}>.Default.Equals(field, value))");
+        sb.AppendLine("                {");
+        sb.AppendLine("                    if (field != null) field.UnregisterParent(this);");
+        sb.AppendLine("                    field = value;");
+        sb.AppendLine($"                    {(nullable ? "if (field != null) " : "")}field.RegisterParent(this, _On{propName}Changed);");
+        sb.AppendLine($"                    if (!{flagName}) _On{propName}Changed();");
+        sb.AppendLine("                }");
+        sb.AppendLine("            }");
+        sb.AppendLine("        }");
+        sb.AppendLine("    }");
+
+        sb.Append(GenerateShadowProperty(propSymbol));
+
+        return sb.ToString();
+    }
+
+    private string GenerateShadowProperty(IPropertySymbol propSymbol)
+    {
+        var propName = propSymbol.Name;
+        var fieldName = $"{char.ToLower(propName[0])}{propName.Substring(1)}";
+        var lockName = $"{fieldName}Lock";
+        var flagName = $"{fieldName}Flag";
+
+        var sb = new StringBuilder();
+
+        sb.AppendLine();
+        sb.AppendLine($"    [global::FreeSql.DataAnnotations.Column(Name = \"{propName}\", StringLength = -1)]");
+        sb.AppendLine("    [global::System.Text.Json.Serialization.JsonIgnore]");
+        sb.AppendLine($"    public string {propName}_JsonShadow");
+        sb.AppendLine("    {");
+        sb.AppendLine("        get");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            lock ({lockName})");
+        sb.AppendLine("            {");
+        sb.AppendLine($"                return global::CyreneMvvm.Config.ObColumnConfig.Parser?.Serialize({propName}) ?? string.Empty;");
+        sb.AppendLine("            }");
+        sb.AppendLine("        }");
+        sb.AppendLine("        set");
+        sb.AppendLine("        {");
+        sb.AppendLine($"            lock ({lockName})");
+        sb.AppendLine("            {");
+        sb.AppendLine($"                {flagName} = true;");
+        sb.AppendLine("                try");
+        sb.AppendLine("                {");
+        sb.AppendLine($"                    var de = global::CyreneMvvm.Config.ObColumnConfig.Parser?.Deserialize<{propSymbol.Type}>(value);");
+        sb.AppendLine($"                    if (de != null) {propName} = de;");
+        sb.AppendLine("                }");
+        sb.AppendLine("                finally");
+        sb.AppendLine("                {");
+        sb.AppendLine($"                    {flagName} = false;");
+        sb.AppendLine("                }");
         sb.AppendLine("            }");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
