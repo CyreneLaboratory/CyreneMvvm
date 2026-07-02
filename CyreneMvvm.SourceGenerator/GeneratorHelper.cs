@@ -44,11 +44,6 @@ public static class GeneratorHelper
         return false;
     }
 
-    public static bool IsPartialProperty(PropertyDeclarationSyntax prop)
-    {
-        return prop.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword));
-    }
-
     public static bool IsObCollection(PropertyDeclarationSyntax prop, SemanticModel model)
     {
         var propertySymbol = model.GetDeclaredSymbol(prop);
@@ -90,12 +85,11 @@ public static class GeneratorHelper
 
     public static bool ShouldGenProp(PropertyDeclarationSyntax prop, SemanticModel model)
     {
-        return IsPartialProperty(prop) && !IsObCollection(prop, model) &&
-            (HasObPropAttr(prop, model) || HasObColumnAttr(prop, model));
+        return !IsObCollection(prop, model) && (HasObPropAttr(prop, model) || HasObColumnAttr(prop, model));
     }
 
     public static bool ShouldGenCollection(PropertyDeclarationSyntax prop, SemanticModel model)
     {
-        return IsPartialProperty(prop) && IsObCollection(prop, model);
+        return IsObCollection(prop, model);
     }
 }
