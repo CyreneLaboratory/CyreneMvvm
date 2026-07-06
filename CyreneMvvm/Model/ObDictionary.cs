@@ -17,35 +17,6 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
     #region Internal
 
     private readonly Dictionary<TKey, TValue> Internal;
-    private readonly Dictionary<INotifyCallback, int> CallbackCounts = new(ReferenceEqualityComparer.Instance);
-
-    private bool TryIncrementCount(TValue item)
-    {
-        if (item is INotifyCallback sub)
-        {
-            CallbackCounts.TryGetValue(sub, out var count);
-            CallbackCounts[sub] = count + 1;
-            return count == 0;
-        }
-        return false;
-    }
-
-    private bool TryDecrementCount(TValue item)
-    {
-        if (item is INotifyCallback sub)
-        {
-            if (CallbackCounts.TryGetValue(sub, out var count))
-            {
-                if (count <= 1)
-                {
-                    CallbackCounts.Remove(sub);
-                    return true;
-                }
-                CallbackCounts[sub] = count - 1;
-            }
-        }
-        return false;
-    }
 
     public ObDictionary()
     {
@@ -130,10 +101,11 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
                 
                 if (containsKey) shouldUnregister = TryDecrementCount(oldValue!);
                 shouldRegister = TryIncrementCount(value);
+                if (shouldUnregister) EnqueueUnregisterValue(oldValue!);
+                if (shouldRegister) EnqueueRegisterValue(value);
             }
 
-            if (shouldUnregister) UnregisterValue(oldValue!);
-            if (shouldRegister) RegisterValue(value);
+            DrainPendingValueCallbacks();
 
             if (!containsKey)
                 OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, new KeyValuePair<TKey, TValue>(key, value)));
@@ -216,23 +188,23 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
         {
             Internal.Add(key, value);
             shouldRegister = TryIncrementCount(value);
+            if (shouldRegister) EnqueueRegisterValue(value);
         }
 
-        if (shouldRegister) RegisterValue(value);
+        DrainPendingValueCallbacks();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, new KeyValuePair<TKey, TValue>(key, value)));
     }
 
     public void Clear()
     {
-        List<INotifyCallback> toUnregister;
         lock (SyncRoot)
         {
-            toUnregister = [.. CallbackCounts.Keys];
+            foreach (var sub in CallbackCounts.Keys) EnqueueUnregisterValue(sub);
             CallbackCounts.Clear();
             Internal.Clear();
         }
 
-        foreach (var sub in toUnregister) sub.UnregisterParent(this);
+        DrainPendingValueCallbacks();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
@@ -290,12 +262,16 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
         lock (SyncRoot)
         {
             removed = Internal.Remove(key, out value);
-            if (removed) shouldUnregister = TryDecrementCount(value!);
+            if (removed)
+            {
+                shouldUnregister = TryDecrementCount(value!);
+                if (shouldUnregister) EnqueueUnregisterValue(value!);
+            }
         }
 
         if (removed)
         {
-            if (shouldUnregister) UnregisterValue(value!);
+            DrainPendingValueCallbacks();
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, new KeyValuePair<TKey, TValue>(key, value!)));
         }
         return removed;
@@ -308,12 +284,16 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
         lock (SyncRoot)
         {
             removed = ((ICollection<KeyValuePair<TKey, TValue>>)Internal).Remove(item);
-            if (removed) shouldUnregister = TryDecrementCount(item.Value);
+            if (removed)
+            {
+                shouldUnregister = TryDecrementCount(item.Value);
+                if (shouldUnregister) EnqueueUnregisterValue(item.Value);
+            }
         }
 
         if (removed)
         {
-            if (shouldUnregister) UnregisterValue(item.Value);
+            DrainPendingValueCallbacks();
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item));
         }
         return removed;
@@ -342,12 +322,16 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
         lock (SyncRoot)
         {
             added = Internal.TryAdd(key, value);
-            if (added) shouldRegister = TryIncrementCount(value);
+            if (added)
+            {
+                shouldRegister = TryIncrementCount(value);
+                if (shouldRegister) EnqueueRegisterValue(value);
+            }
         }
 
         if (added)
         {
-            if (shouldRegister) RegisterValue(value);
+            DrainPendingValueCallbacks();
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, new KeyValuePair<TKey, TValue>(key, value)));
         }
         return added;
@@ -373,6 +357,37 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
 
     private readonly ConcurrentDictionary<object, Action> ParentObservers = [];
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
+    private readonly Dictionary<INotifyCallback, int> CallbackCounts = new(ReferenceEqualityComparer.Instance);
+    private readonly Queue<Action> PendingValueCallbacks = new();
+    private bool IsDrainingValueCallbacks;
+
+    private bool TryIncrementCount(TValue item)
+    {
+        if (item is INotifyCallback sub)
+        {
+            CallbackCounts.TryGetValue(sub, out var count);
+            CallbackCounts[sub] = count + 1;
+            return count == 0;
+        }
+        return false;
+    }
+
+    private bool TryDecrementCount(TValue item)
+    {
+        if (item is INotifyCallback sub)
+        {
+            if (CallbackCounts.TryGetValue(sub, out var count))
+            {
+                if (count <= 1)
+                {
+                    CallbackCounts.Remove(sub);
+                    return true;
+                }
+                CallbackCounts[sub] = count - 1;
+            }
+        }
+        return false;
+    }
 
     protected virtual void OnParentChanged()
     {
@@ -401,9 +416,60 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
             sub.RegisterParent(this, OnParentChanged);
     }
 
-    private void UnregisterValue(TValue item)
+    private void EnqueueRegisterValue(TValue item)
     {
         if (item is INotifyCallback sub)
-            sub.UnregisterParent(this);
+            PendingValueCallbacks.Enqueue(() => sub.RegisterParent(this, OnParentChanged));
+    }
+
+    private void EnqueueUnregisterValue(TValue item)
+    {
+        if (item is INotifyCallback sub)
+            PendingValueCallbacks.Enqueue(() => sub.UnregisterParent(this));
+    }
+
+    private void EnqueueUnregisterValue(INotifyCallback sub)
+    {
+        PendingValueCallbacks.Enqueue(() => sub.UnregisterParent(this));
+    }
+
+    private void DrainPendingValueCallbacks()
+    {
+        Action action;
+        lock (SyncRoot)
+        {
+            if (IsDrainingValueCallbacks || PendingValueCallbacks.Count == 0) return;
+
+            IsDrainingValueCallbacks = true;
+            action = PendingValueCallbacks.Dequeue();
+        }
+
+        try
+        {
+            while (true)
+            {
+                action();
+
+                lock (SyncRoot)
+                {
+                    if (PendingValueCallbacks.Count == 0)
+                    {
+                        IsDrainingValueCallbacks = false;
+                        return;
+                    }
+
+                    action = PendingValueCallbacks.Dequeue();
+                }
+            }
+        }
+        catch
+        {
+            lock (SyncRoot)
+            {
+                IsDrainingValueCallbacks = false;
+            }
+
+            throw;
+        }
     }
 }

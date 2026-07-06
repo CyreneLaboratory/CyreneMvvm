@@ -15,35 +15,6 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     #region Internal
 
     private readonly List<T> Internal;
-    private readonly Dictionary<INotifyCallback, int> CallbackCounts = new(ReferenceEqualityComparer.Instance);
-
-    private bool TryIncrementCount(T item)
-    {
-        if (item is INotifyCallback sub)
-        {
-            CallbackCounts.TryGetValue(sub, out var count);
-            CallbackCounts[sub] = count + 1;
-            return count == 0;
-        }
-        return false;
-    }
-
-    private bool TryDecrementCount(T item)
-    {
-        if (item is INotifyCallback sub)
-        {
-            if (CallbackCounts.TryGetValue(sub, out var count))
-            {
-                if (count <= 1)
-                {
-                    CallbackCounts.Remove(sub);
-                    return true;
-                }
-                CallbackCounts[sub] = count - 1;
-            }
-        }
-        return false;
-    }
 
     public ObList()
     {
@@ -88,10 +59,11 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
                 Internal[index] = value;
                 shouldUnregisterOld = TryDecrementCount(oldItem);
                 shouldRegisterNew = TryIncrementCount(value);
+                if (shouldUnregisterOld) EnqueueUnregisterValue(oldItem);
+                if (shouldRegisterNew) EnqueueRegisterValue(value);
             }
 
-            if (shouldUnregisterOld) UnregisterValue(oldItem);
-            if (shouldRegisterNew) RegisterValue(value);
+            DrainPendingValueCallbacks();
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Replace, value, oldItem, index));
         }
     }
@@ -136,26 +108,26 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
             Internal.Add(item);
             newIndex = Internal.Count - 1;
             shouldRegister = TryIncrementCount(item);
+            if (shouldRegister) EnqueueRegisterValue(item);
         }
 
-        if (shouldRegister) RegisterValue(item);
+        DrainPendingValueCallbacks();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, newIndex));
     }
 
     public void AddRange(IEnumerable<T> items)
     {
         var list = items.ToList();
-        var toRegister = new List<T>();
         lock (SyncRoot)
         {
             Internal.AddRange(list);
             foreach (var item in list)
             {
-                if (TryIncrementCount(item)) toRegister.Add(item);
+                if (TryIncrementCount(item)) EnqueueRegisterValue(item);
             }
         }
 
-        foreach (var item in toRegister) RegisterValue(item);
+        DrainPendingValueCallbacks();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
@@ -190,15 +162,14 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     public void Clear()
     {
-        List<INotifyCallback> toUnregister;
         lock (SyncRoot)
         {
-            toUnregister = [.. CallbackCounts.Keys];
+            foreach (var sub in CallbackCounts.Keys) EnqueueUnregisterValue(sub);
             CallbackCounts.Clear();
             Internal.Clear();
         }
 
-        foreach (var sub in toUnregister) sub.UnregisterParent(this);
+        DrainPendingValueCallbacks();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
@@ -393,26 +364,26 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
         {
             Internal.Insert(index, item);
             shouldRegister = TryIncrementCount(item);
+            if (shouldRegister) EnqueueRegisterValue(item);
         }
 
-        if (shouldRegister) RegisterValue(item);
+        DrainPendingValueCallbacks();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Add, item, index));
     }
 
     public void InsertRange(int index, IEnumerable<T> collection)
     {
         var list = collection.ToList();
-        var toRegister = new List<T>();
         lock (SyncRoot)
         {
             Internal.InsertRange(index, list);
             foreach (var item in list)
             {
-                if (TryIncrementCount(item)) toRegister.Add(item);
+                if (TryIncrementCount(item)) EnqueueRegisterValue(item);
             }
         }
 
-        foreach (var item in toRegister) RegisterValue(item);
+        DrainPendingValueCallbacks();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
@@ -452,12 +423,13 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
             if (removed)
             {
                 shouldUnregister = TryDecrementCount(item);
+                if (shouldUnregister) EnqueueUnregisterValue(item);
             }
         }
 
         if (removed)
         {
-            if (shouldUnregister) UnregisterValue(item);
+            DrainPendingValueCallbacks();
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
         }
         return removed;
@@ -467,7 +439,6 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     {
         List<T> toRemove;
         int removed;
-        var toUnregister = new List<T>();
         lock (SyncRoot)
         {
             toRemove = Internal.FindAll(match);
@@ -476,13 +447,13 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
             if (removed > 0)
                 foreach (var item in toRemove)
                 {
-                    if (TryDecrementCount(item)) toUnregister.Add(item);
+                    if (TryDecrementCount(item)) EnqueueUnregisterValue(item);
                 }
         }
 
         if (removed > 0)
         {
-            foreach (var item in toUnregister) UnregisterValue(item);
+            DrainPendingValueCallbacks();
             OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
         }
         return removed;
@@ -497,16 +468,16 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
             item = Internal[index];
             Internal.RemoveAt(index);
             shouldUnregister = TryDecrementCount(item);
+            if (shouldUnregister) EnqueueUnregisterValue(item);
         }
 
-        if (shouldUnregister) UnregisterValue(item);
+        DrainPendingValueCallbacks();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Remove, item, index));
     }
 
     public void RemoveRange(int index, int count)
     {
         List<T> toRemove;
-        var toUnregister = new List<T>();
         lock (SyncRoot)
         {
             toRemove = Internal.GetRange(index, count);
@@ -514,11 +485,11 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
             foreach (var item in toRemove)
             {
-                if (TryDecrementCount(item)) toUnregister.Add(item);
+                if (TryDecrementCount(item)) EnqueueUnregisterValue(item);
             }
         }
 
-        foreach (var item in toUnregister) UnregisterValue(item);
+        DrainPendingValueCallbacks();
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
@@ -618,6 +589,37 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     private readonly ConcurrentDictionary<object, Action> ParentObservers = [];
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
+    private readonly Dictionary<INotifyCallback, int> CallbackCounts = new(ReferenceEqualityComparer.Instance);
+    private readonly Queue<Action> PendingValueCallbacks = new();
+    private bool IsDrainingValueCallbacks;
+
+    private bool TryIncrementCount(T item)
+    {
+        if (item is INotifyCallback sub)
+        {
+            CallbackCounts.TryGetValue(sub, out var count);
+            CallbackCounts[sub] = count + 1;
+            return count == 0;
+        }
+        return false;
+    }
+
+    private bool TryDecrementCount(T item)
+    {
+        if (item is INotifyCallback sub)
+        {
+            if (CallbackCounts.TryGetValue(sub, out var count))
+            {
+                if (count <= 1)
+                {
+                    CallbackCounts.Remove(sub);
+                    return true;
+                }
+                CallbackCounts[sub] = count - 1;
+            }
+        }
+        return false;
+    }
 
     protected virtual void OnParentChanged()
     {
@@ -646,9 +648,60 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
             sub.RegisterParent(this, OnParentChanged);
     }
 
-    private void UnregisterValue(T item)
+    private void EnqueueRegisterValue(T item)
     {
         if (item is INotifyCallback sub)
-            sub.UnregisterParent(this);
+            PendingValueCallbacks.Enqueue(() => sub.RegisterParent(this, OnParentChanged));
+    }
+
+    private void EnqueueUnregisterValue(T item)
+    {
+        if (item is INotifyCallback sub)
+            PendingValueCallbacks.Enqueue(() => sub.UnregisterParent(this));
+    }
+
+    private void EnqueueUnregisterValue(INotifyCallback sub)
+    {
+        PendingValueCallbacks.Enqueue(() => sub.UnregisterParent(this));
+    }
+
+    private void DrainPendingValueCallbacks()
+    {
+        Action action;
+        lock (SyncRoot)
+        {
+            if (IsDrainingValueCallbacks || PendingValueCallbacks.Count == 0) return;
+
+            IsDrainingValueCallbacks = true;
+            action = PendingValueCallbacks.Dequeue();
+        }
+
+        try
+        {
+            while (true)
+            {
+                action();
+
+                lock (SyncRoot)
+                {
+                    if (PendingValueCallbacks.Count == 0)
+                    {
+                        IsDrainingValueCallbacks = false;
+                        return;
+                    }
+
+                    action = PendingValueCallbacks.Dequeue();
+                }
+            }
+        }
+        catch
+        {
+            lock (SyncRoot)
+            {
+                IsDrainingValueCallbacks = false;
+            }
+
+            throw;
+        }
     }
 }

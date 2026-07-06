@@ -168,6 +168,7 @@ public class ObservableGenerator : ISourceGenerator
         sb.AppendLine("        }");
         sb.AppendLine("        set");
         sb.AppendLine("        {");
+        sb.AppendLine("            var notify = false;");
         sb.AppendLine($"            lock ({lockName})");
         sb.AppendLine("            {");
         sb.AppendLine($"                if (!global::System.Collections.Generic.EqualityComparer<{propType}>.Default.Equals(field, value))");
@@ -175,9 +176,10 @@ public class ObservableGenerator : ISourceGenerator
         if (isRef) sb.AppendLine($"                    if (field is global::{GeneratorHelper.INotifyCallback} u) u.UnregisterParent(this);");
         sb.AppendLine("                    field = value;");
         if (isRef) sb.AppendLine($"                    if (field is global::{GeneratorHelper.INotifyCallback} r) r.RegisterParent(this, _On{propName}Changed);");
-        sb.AppendLine($"                    if (!{flagName}) _On{propName}Changed();");
+        sb.AppendLine($"                    notify = !{flagName};");
         sb.AppendLine("                }");
         sb.AppendLine("            }");
+        sb.AppendLine($"            if (notify) _On{propName}Changed();");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
 
@@ -256,6 +258,7 @@ public class ObservableGenerator : ISourceGenerator
         sb.AppendLine("        }");
         sb.AppendLine("        set");
         sb.AppendLine("        {");
+        sb.AppendLine("            var notify = false;");
         sb.AppendLine($"            lock ({lockName})");
         sb.AppendLine("            {");
         sb.AppendLine($"                if (!global::System.Collections.Generic.EqualityComparer<{propType}>.Default.Equals(field, value))");
@@ -263,9 +266,10 @@ public class ObservableGenerator : ISourceGenerator
         sb.AppendLine("                    if (field != null) field.UnregisterParent(this);");
         sb.AppendLine("                    field = value;");
         sb.AppendLine($"                    {(nullable ? "if (field != null) " : "")}field.RegisterParent(this, _On{propName}Changed);");
-        sb.AppendLine($"                    if (!{flagName}) _On{propName}Changed();");
+        sb.AppendLine($"                    notify = !{flagName};");
         sb.AppendLine("                }");
         sb.AppendLine("            }");
+        sb.AppendLine($"            if (notify) _On{propName}Changed();");
         sb.AppendLine("        }");
         sb.AppendLine("    }");
 
