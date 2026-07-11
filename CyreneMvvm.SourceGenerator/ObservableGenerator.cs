@@ -38,21 +38,32 @@ public class ObservableGenerator : ISourceGenerator
             var classSymbol = model.GetDeclaredSymbol(candidateClass);
             if (classSymbol == null || !GeneratorHelper.IsObObject(classSymbol)) continue;
 
-            var source = Generate(classSymbol, candidateClass, model);
+            var source = Generate(context, classSymbol, candidateClass, model);
             if (string.IsNullOrEmpty(source)) continue;
 
             context.AddSource($"{classSymbol.Name}_Observable.g.cs", SourceText.From(source, Encoding.UTF8));
         }
     }
 
-    private string Generate(INamedTypeSymbol classSymbol, ClassDeclarationSyntax classSyntax, SemanticModel model)
+    private string Generate(GeneratorExecutionContext context, INamedTypeSymbol classSymbol, ClassDeclarationSyntax classSyntax, SemanticModel model)
     {
         var props = new List<PropertyDeclarationSyntax>();
         var collections = new List<PropertyDeclarationSyntax>();
         foreach (var prop in classSyntax.Members.OfType<PropertyDeclarationSyntax>())
         {
-            if (GeneratorHelper.ShouldGenProp(prop, model)) props.Add(prop);
-            if (GeneratorHelper.ShouldGenCollection(prop, model)) collections.Add(prop);
+            var propSymbol = model.GetDeclaredSymbol(prop);
+            if (propSymbol == null) continue;
+
+            if (GeneratorHelper.HasObIgnoreAttr(prop, model)) continue;
+            if (!GeneratorHelper.IsSupportedType(propSymbol.Type))
+            {
+                context.ReportDiagnostic(Diagnostic.Create(GeneratorHelper.UnsupportedType, prop.GetLocation(),
+                    propSymbol.Name, propSymbol.Type.ToDisplayString()));
+                continue;
+            }
+
+            if (GeneratorHelper.IsObCollection(prop, model)) collections.Add(prop);
+            else props.Add(prop);
         }
         if (props.Count == 0 && collections.Count == 0) return "";
 

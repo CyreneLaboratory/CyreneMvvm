@@ -11,8 +11,7 @@ public static class GeneratorHelper
     public const string ObObject = "CyreneMvvm.Model.ObObject";
     public const string ObList = "CyreneMvvm.Model.ObList";
     public const string ObDictionary = "CyreneMvvm.Model.ObDictionary";
-    public const string ObProp = "CyreneMvvm.Attributes.ObPropAttribute";
-    public const string ObColumn = "CyreneMvvm.Attributes.ObColumnAttribute";
+    public const string ObIgnore = "CyreneMvvm.Attributes.ObIgnoreAttribute";
     public const string ObShadow = "CyreneMvvm.Attributes.ObShadowAttribute";
 
     public static bool IsPrimary(ITypeSymbol typeSymbol)
@@ -35,9 +34,12 @@ public static class GeneratorHelper
         };
     }
 
-    public static bool IsObObject(INamedTypeSymbol classSymbol)
+    public static bool IsObObject(ITypeSymbol typeSymbol)
     {
-        var baseType = classSymbol.BaseType;
+        if (typeSymbol is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+            typeSymbol = nullable.TypeArguments[0];
+
+        var baseType = typeSymbol.BaseType;
         while (baseType != null)
         {
             if (baseType.ToDisplayString().Contains(ObObject)) return true;
@@ -55,33 +57,21 @@ public static class GeneratorHelper
         return typeString.Contains(ObList) || typeString.Contains(ObDictionary);
     }
 
-    public static bool HasObPropAttr(PropertyDeclarationSyntax prop, SemanticModel model)
+    public static bool IsSupportedType(ITypeSymbol typeSymbol)
+    {
+        var typeString = typeSymbol.ToDisplayString();
+        if (typeString.Contains(ObList) || typeString.Contains(ObDictionary)) return true;
+        return IsPrimary(typeSymbol) || IsObObject(typeSymbol);
+    }
+
+    public static bool HasObIgnoreAttr(PropertyDeclarationSyntax prop, SemanticModel model)
     {
         foreach (var attributeList in prop.AttributeLists)
             foreach (var attribute in attributeList.Attributes)
             {
                 var symbol = model.GetSymbolInfo(attribute).Symbol?.ContainingType;
-                if (symbol != null && symbol.ToDisplayString().Contains(ObProp)) return true;
+                if (symbol != null && symbol.ToDisplayString().Contains(ObIgnore)) return true;
             }
-        return false;
-    }
-
-    public static bool HasObColumnAttr(PropertyDeclarationSyntax prop, SemanticModel model)
-    {
-        foreach (var attributeList in prop.AttributeLists)
-            foreach (var attribute in attributeList.Attributes)
-            {
-                var symbol = model.GetSymbolInfo(attribute).Symbol?.ContainingType;
-                if (symbol != null && symbol.ToDisplayString().Contains(ObColumn)) return true;
-            }
-        return false;
-    }
-
-    public static bool HasObColumnAttr(IPropertySymbol propSymbol)
-    {
-        foreach (var attribute in propSymbol.GetAttributes())
-            if (attribute.AttributeClass?.ToDisplayString().Contains(ObColumn) == true)
-                return true;
         return false;
     }
 
@@ -105,13 +95,6 @@ public static class GeneratorHelper
         return true;
     }
 
-    public static bool ShouldGenProp(PropertyDeclarationSyntax prop, SemanticModel model)
-    {
-        return !IsObCollection(prop, model) && (HasObPropAttr(prop, model) || HasObColumnAttr(prop, model));
-    }
-
-    public static bool ShouldGenCollection(PropertyDeclarationSyntax prop, SemanticModel model)
-    {
-        return IsObCollection(prop, model);
-    }
+    public static readonly DiagnosticDescriptor UnsupportedType = new("CYM001", "Unsupported observable type",
+        "Property '{0}' with type '{1}' cannot be observed.", "CyreneMvvm", DiagnosticSeverity.Error, true);
 }
