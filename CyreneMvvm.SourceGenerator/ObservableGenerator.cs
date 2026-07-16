@@ -84,18 +84,39 @@ public class ObservableGenerator : ISourceGenerator
         sb.AppendLine($"{modifiers} class {classSymbol.Name}");
         sb.AppendLine("{");
 
+        var shadowProps = new List<string>();
         foreach (var prop in props)
         {
             var propSymbol = model.GetDeclaredSymbol(prop);
             if (propSymbol == null) continue;
-            sb.AppendLine(GeneratorHelper.ShouldGenShadow(classSymbol, propSymbol) ? GenerateIgnoreProperty(propSymbol) : GenerateProperty(propSymbol));
-        }
 
+            if (!GeneratorHelper.ShouldGenShadow(classSymbol, propSymbol))
+                sb.AppendLine(GenerateProperty(propSymbol));
+            else
+            {
+                sb.AppendLine(GenerateIgnoreProperty(propSymbol));
+                shadowProps.Add(propSymbol.Name);
+            }
+        }
         foreach (var collection in collections)
         {
             var propSymbol = model.GetDeclaredSymbol(collection);
             if (propSymbol == null) continue;
-            sb.AppendLine(GeneratorHelper.ShouldGenShadow(classSymbol, propSymbol) ? GenerateIgnoreCollection(propSymbol) : GenerateCollection(propSymbol));
+
+            if (!GeneratorHelper.ShouldGenShadow(classSymbol, propSymbol))
+                sb.AppendLine(GenerateCollection(propSymbol));
+            else
+            {
+                sb.AppendLine(GenerateIgnoreCollection(propSymbol));
+                shadowProps.Add(propSymbol.Name);
+            }
+        }
+
+        if (shadowProps.Count > 0)
+        {
+            sb.AppendLine("    [global::System.Runtime.CompilerServices.ModuleInitializer]");
+            foreach (var name in shadowProps) sb.AppendLine($"    [global::System.Diagnostics.CodeAnalysis.DynamicDependency(nameof({name}_JsonShadow))]");
+            sb.AppendLine("    internal static void __PreserveJsonShadow() { }");
         }
 
         sb.AppendLine("}");
