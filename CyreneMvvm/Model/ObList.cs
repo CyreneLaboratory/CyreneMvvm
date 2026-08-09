@@ -56,6 +56,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
             lock (SyncRoot)
             {
                 oldItem = Internal[index];
+                if (EqualityComparer<T>.Default.Equals(oldItem, value)) return;
+
                 Internal[index] = value;
                 shouldUnregisterOld = TryDecrementCount(oldItem);
                 shouldRegisterNew = TryIncrementCount(value);
@@ -118,6 +120,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     public void AddRange(IEnumerable<T> items)
     {
         var list = items.ToList();
+        if (list.Count == 0) return;
+
         lock (SyncRoot)
         {
             Internal.AddRange(list);
@@ -164,6 +168,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     {
         lock (SyncRoot)
         {
+            if (Internal.Count == 0) return;
+
             foreach (var sub in CallbackCounts.Keys) EnqueueUnregisterValue(sub);
             CallbackCounts.Clear();
             Internal.Clear();
@@ -374,6 +380,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     public void InsertRange(int index, IEnumerable<T> collection)
     {
         var list = collection.ToList();
+        if (list.Count == 0) return;
+
         lock (SyncRoot)
         {
             Internal.InsertRange(index, list);
@@ -477,6 +485,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     public void RemoveRange(int index, int count)
     {
+        if (count == 0) return;
+
         List<T> toRemove;
         lock (SyncRoot)
         {
@@ -495,6 +505,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     public void Reverse(int index, int count)
     {
+        if (count <= 1) return;
+
         lock (SyncRoot)
         {
             Internal.Reverse(index, count);
@@ -507,6 +519,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     {
         lock (SyncRoot)
         {
+            if (Internal.Count <= 1) return;
+
             Internal.Reverse();
         }
 
@@ -525,6 +539,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     {
         lock (SyncRoot)
         {
+            if (Internal.Count <= 1) return;
+
             Internal.Sort(comparer);
         }
 
@@ -535,6 +551,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     {
         lock (SyncRoot)
         {
+            if (Internal.Count <= 1) return;
+
             Internal.Sort(comparison);
         }
 
@@ -543,6 +561,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     public void Sort(int index, int count, IComparer<T>? comparer)
     {
+        if (count <= 1) return;
+
         lock (SyncRoot)
         {
             Internal.Sort(index, count, comparer);
@@ -555,6 +575,8 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
     {
         lock (SyncRoot)
         {
+            if (Internal.Count <= 1) return;
+
             Internal.Sort();
         }
 
@@ -623,7 +645,7 @@ public class ObList<T> : ICollection<T>, IEnumerable<T>, IEnumerable,
 
     protected virtual void OnParentChanged()
     {
-        foreach (var callback in ParentObservers.Values) callback();
+        foreach (var callback in ParentObservers.Values.ToArray()) callback();
     }
 
     protected virtual void OnCollectionChanged(NotifyCollectionChangedEventArgs e)

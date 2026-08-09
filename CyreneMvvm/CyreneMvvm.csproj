@@ -9,7 +9,7 @@
     <NoWarn>$(NoWarn);CS1591</NoWarn>
 
     <PackageId>CyreneMvvm</PackageId>
-    <Version>2.0.0</Version>
+    <Version>2.1.0</Version>
     <Authors>CyreneLaboratory</Authors>
     <Company>CyreneLaboratory</Company>
     <Product>CyreneMvvm</Product>

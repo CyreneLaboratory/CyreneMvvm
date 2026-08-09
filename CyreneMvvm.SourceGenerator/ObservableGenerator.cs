@@ -326,10 +326,7 @@ public class ObservableGenerator : ISourceGenerator
         sb.AppendLine("    {");
         sb.AppendLine("        get");
         sb.AppendLine("        {");
-        sb.AppendLine($"            lock ({lockName})");
-        sb.AppendLine("            {");
-        sb.AppendLine($"                return global::CyreneMvvm.Config.ObColumnConfig.Parser?.Serialize({propName}) ?? string.Empty;");
-        sb.AppendLine("            }");
+        sb.AppendLine($"            return global::CyreneMvvm.Config.ObColumnConfig.Parser?.Serialize({propName}) ?? \"\";");
         sb.AppendLine("        }");
         sb.AppendLine("        set");
         sb.AppendLine("        {");

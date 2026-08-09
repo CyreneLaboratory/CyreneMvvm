@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 
 namespace CyreneMvvm.Model;
 
@@ -97,6 +98,8 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
             {
                 containsKey = Internal.ContainsKey(key);
                 oldValue = containsKey ? Internal[key] : default!;
+                if (containsKey && EqualityComparer<TValue>.Default.Equals(oldValue, value)) return;
+
                 Internal[key] = value;
                 
                 if (containsKey) shouldUnregister = TryDecrementCount(oldValue!);
@@ -199,6 +202,8 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
     {
         lock (SyncRoot)
         {
+            if (Internal.Count == 0) return;
+
             foreach (var sub in CallbackCounts.Keys) EnqueueUnregisterValue(sub);
             CallbackCounts.Clear();
             Internal.Clear();
@@ -391,7 +396,7 @@ public class ObDictionary<TKey, TValue> : ICollection<KeyValuePair<TKey, TValue>
 
     protected virtual void OnParentChanged()
     {
-        foreach (var callback in ParentObservers.Values) callback();
+        foreach (var callback in ParentObservers.Values.ToArray()) callback();
     }
 
     protected virtual void OnCollectionChanged(NotifyCollectionChangedEventArgs e)
